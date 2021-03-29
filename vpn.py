@@ -1,137 +1,135 @@
-#!/usr/bin/python
-
-from __future__ import (absolute_import, division, print_function)
-__metaclass__ = type
+#!/usr/bin/python3
+"""
+"""
+import platform
+import os
+import traceback
+import shutil
+import tempfile
+from subprocess import Popen, PIPE
 import subprocess
-from subprocess import CalledProcessError, TimeoutExpired
-from ansible.module_utils.basic import AnsibleModule
+import logging
+from config import Config
+from shell import Shell, CommandError
 
-DOCUMENTATION = r'''
----
-module: OpenVpn
+logging.basicConfig(format="%(message)s", level=logging.DEBUG)
 
-installs OpenVpnServer on Ubuntu with CA / server Key
+exec_path = os.path.abspath(os.path.dirname(__file__))
 
-# If this is part of a collection, you need to use semantic versioning,
-# i.e. the version is of the form "2.5.0" and not "2.4".
-version_added: "1.0.0"
 
-description: installs OpenVpnServer on Ubuntu with CA / server Key
-
-options:
-    name:
-        description: This is the message to send to the test module.
-        required: true
-        type: str
-    new:
-        description:
-            - Control to demo if the result of this module is changed or not.
-            - Parameter description can be a list as well.
-        required: false
-        type: bool
-# Specify this value according to your collection
-# in format of namespace.collection.doc_fragment_name
-extends_documentation_fragment:
-    -
-
-author:
-    -
-'''
-
-EXAMPLES = r'''
-# Pass in a message
-- name: Test with a message
-  my_namespace.my_collection.my_test:
-    name: hello world
-
-# pass in a message and have changed true
-- name: Test with a message and changed output
-  my_namespace.my_collection.my_test:
-    name: hello world
-    new: true
-
-# fail the module
-- name: Test failure of the module
-  my_namespace.my_collection.my_test:
-    name: fail me
-'''
-
-RETURN = r'''
-# These are examples of possible return values, and in general should use
-# other names for return values.
-original_message:
-    description: The original name param that was passed in.
-    type: str
-    returned: always
-    sample: 'hello world'
-message:
-    description: The output message that the test module generates.
-    type: str
-    returned: always
-    sample: 'goodbye'
-'''
+def command(list):
+    try:
+        subprocess.run(
+            list,
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+        return 0
+    except subprocess.CalledProcessError as e:
+        raise e
+    except subprocess.TimeoutExpired as e:
+        raise e
 
 
 def open_vpn_install():
-    ovpn_install = subprocess
+    logging.info("Installing OpenVPN")
     try:
-        install_result = ovpn_install.run(
-            ["apt", "install", "openvpn"], check=True,
-            capture_output=True, timeout=300
-            )
+        install_result = subprocess.run(
+            ["apt", "install", "openvpn"], check=True, capture_output=True, timeout=300
+        )
         if b"already" in install_result.stdout.split():
-            changed = False
-        else:
-            changed = True
-        return [0, changed]
-    except CalledProcessError as e:
+            return [0, True]
+    except subprocess.CalledProcessError as e:
         return [1, str(e)]
-    except TimeoutExpired as e:
+    except subprocess.TimeoutExpired as e:
         return [1, str(e)]
+
+
+def certificates_gen():
+    logging.info("Downloading/extracting EasyRsa")
+    cmd_list = [
+        [
+            "wget",
+            "-P",
+            "~/",
+            "https://github.com/OpenVPN/easy-rsa/releases"
+            + "/download/v3.0.8/EasyRSA-3.0.8.tgz",
+        ],
+        ["tar", "xvf", "EasyRSA-3.0.8.tgz"],
+        ["cp", "EasyRSA-3.0.8/vars.example", "EasyRSA-3.0.8/vars"],
+    ]
+    [command(cmd) for cmd in cmd_list]
+    with open(exec_path + "/EasyRSA-3.0.8/vars", "a") as f:
+        (f.write("\n" + option) for option in Config.RSA)
+    logging.info("initialising Easy RSA")
+    if not os.path.exists(exec_path + "/pki"):
+        command(["EasyRSA-3.0.8/./easyrsa", "init-pki"])
+    if not os.path.exists(exec_path + "/pki/ca.crt"):
+        try:
+            build_ca = Shell(has_input=True)
+            build_ca.run("EasyRSA-3.0.8/./easyrsa build-ca nopass")
+            build_ca.write("\n")
+            logging.info("CA certificate generated")
+        except CommandError as e:
+            return [1, str(e)]
+    if not os.path.exists(exec_path + "/pki/reqs/server.req"):
+        try:
+            serv_certificate = Shell(has_input=True)
+            serv_certificate.run("EasyRSA-3.0.8/./easyrsa gen-req server nopass")
+            serv_certificate.write("yes\n")
+            logging.info("request for server cert generated")
+        except CommandError as e:
+            return [1, str(e)]
+        try:
+            sign_serv_cert = Shell(has_input=True)
+            sign_serv_cert.run("EasyRSA-3.0.8/./easyrsa sign-req server server")
+            sign_serv_cert.write("yes\n")
+            logging.info("server cert signed")
+        except CommandError as e:
+            return [1, str(e)]
+    if not os.path.exists(exec_path + "/pki/dh.pem"):
+        command(["EasyRSA-3.0.8/./easyrsa", "gen-dh"])
+    if not os.path.exists(exec_path + "/ta.key"):
+        command(["openvpn", "--genkey", "--secret", "ta.key"]),
+    cmd_list2 = [
+        ["sudo", "cp", exec_path + "/pki/private/server.key", "/etc/openvpn/"],
+        ["sudo", "cp", exec_path + "/pki/issued/server.crt", "/etc/openvpn"],
+        ["sudo", "cp", exec_path + "/pki/ca.crt", "/etc/openvpn"],
+        ["sudo", "cp", exec_path + "/ta.key", "/etc/openvpn/"],
+        ["sudo", "cp", exec_path + "/pki/dh.pem", "/etc/openvpn/"],
+    ]
+    [command(cmd) for cmd in cmd_list2]
+    return [0, "changed"]
+
+
+def open_vpn_config():
+    # create conf file and parses options
+    cmd_list = [
+        ["sudo", "cp", "/usr/share/doc/openvpn/examples/sample-config-files/server.conf.gz", "/etc/openvpn/server.conf.gz"],
+        ["sudo", "gzip", "-d", "/etc/openvpn/server.conf.gz"],
+    ]
+    [command(cmd) for cmd in cmd_list]
+    return [0, "changed"]
 
 
 def main():
-    module_args = dict(
-        name=dict(type='str', required=False),
-        new=dict(type='bool', required=False, default=False)
-    )
-
-    # seed the result dict in the object
-    # we primarily care about changed and state
-    # changed is if this module effectively modified the target
-    # state will include any data that you want your module to pass back
-    # for consumption, for example, in a subsequent task
-    result = dict(
-        changed=False,
-        ovpn_install='',
-        error='',
-    )
-
-    # the AnsibleModule object will be our abstraction working with Ansible
-    # this includes instantiation, a couple of common attr would be the
-    # args/params passed to the execution, as well as if the module
-    # supports check mode
-    module = AnsibleModule(
-        argument_spec=module_args,
-        supports_check_mode=True,
-    )
-
-    # if the user is working with this module in only check mode we do not
-    # want to make any changes to the environment, just return the current
-    # state with no modifications
-    if module.check_mode:
-        module.exit_json(**result)
-    if module.params['name'] == 'failme':
-        module.fail_json(msg='You requested this to fail', **result)
     ovpn_install = open_vpn_install()
     if ovpn_install[0] == 0:
-        result['ovpn_install'] = 'installation openvpn OK'
-        result['changed'] = ovpn_install[1]
-        module.exit_json(**result)
+        logging.info("VPN properly installed")
     else:
-        result['error'] = ovpn_install[1]
-        module.fail_json(msg='the installation of OpenVpn Failed', **result)
+        logging.info("VPN not installed : {}".format(str(ovpn_install[1])))
+    certificates = certificates_gen()
+    if certificates[0] == 0:
+        logging.info("server certificates properly installed")
+    else:
+        logging.info("VPN not installed : {}".format(str(certificates[1])))
+    ovpn_conf = open_vpn_config()
+    if ovpn_conf[0] == 0:
+        logging.info("VPN properly configured")
+    else:
+        logging.info("VPN not configured : {}".format(str(certificates[1])))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
