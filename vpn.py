@@ -23,7 +23,7 @@ def command(list):
     take a list of strings ex :
     ["sudo", "cp", "/etc/systemctl.conf", "/home/administrateur/system.conf"]
     returns [0, standard output] if OK
-    raises an execption if either the cmd fails or if it exeeds 20sec to finish
+    raises an exception if either the cmd fails or if it exeeds 20sec to finish
     """
     try:
         a = subprocess.run(
@@ -165,19 +165,19 @@ def main():
     if ovpn_install[0] == 0:
         logging.info("VPN properly installed")
     else:
-        logging.info("VPN not installed : {}".format(str(ovpn_install[1])))
+        logging.info("VPN not installed")
         return 1
     certificates = certificates_gen()
     if certificates[0] == 0:
         logging.info("server certificates properly installed")
     else:
-        logging.info("VPN not installed : {}".format(str(certificates[1])))
+        logging.info("VPN not installed")
         return 1
     ovpn_conf = open_vpn_config()
     if ovpn_conf[0] == 0:
         logging.info("VPN properly configured")
     else:
-        logging.info("VPN not configured : {}".format(str(certificates[1])))
+        logging.info("VPN not configured")
         return 1
 
 
