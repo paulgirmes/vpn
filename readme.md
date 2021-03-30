@@ -1,6 +1,6 @@
 # <H1 align="center">VPN Server installation tool for Ubuntu server</h1>
 
-<h4 align="center">A Script tha handles the installation and configuration of OpenVpn on Ubuntu server distributions (together with CA/server certs ...) .</h4>
+<h4 align="center">A Script that handles the installation and configuration of OpenVpn on Ubuntu server distributions (together with CA/server certs ...) .</h4>
 
 <h5 align="center">Project 6 of OpenClassrooms Admin Sys/Cloud<h5>
 
