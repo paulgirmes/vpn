@@ -1,31 +1,38 @@
 #!/usr/bin/python3
 """
+install and configure an vpn server + server certs/CA, enables it at startup
+on a new install of Ubuntu server, use [[ sudo python ./vpn.py ]]
+after having copied all the files in the server admin local home
+prerequisites : python3.x, shell
 """
-import platform
 import os
-import traceback
-import shutil
-import tempfile
-from subprocess import Popen, PIPE
 import subprocess
 import logging
 from config import Config
 from shell import Shell, CommandError
 
+# logger conf
 logging.basicConfig(format="%(message)s", level=logging.DEBUG)
-
+# setting the path of this file execution for future reference
 exec_path = os.path.abspath(os.path.dirname(__file__))
 
 
 def command(list):
+    """
+    execute an os command,
+    take a list of strings ex :
+    ["sudo", "cp", "/etc/systemctl.conf", "/home/administrateur/system.conf"]
+    returns [0, standard output] if OK
+    raises an execption if either the cmd fails or if it exeeds 20sec to finish
+    """
     try:
-        subprocess.run(
+        a = subprocess.run(
             list,
             check=True,
             capture_output=True,
-            timeout=10,
+            timeout=20,
         )
-        return 0
+        return [0, str(a.stdout)]
     except subprocess.CalledProcessError as e:
         raise e
     except subprocess.TimeoutExpired as e:
@@ -36,10 +43,10 @@ def open_vpn_install():
     logging.info("Installing OpenVPN")
     try:
         install_result = subprocess.run(
-            ["apt", "install", "openvpn"], check=True, capture_output=True, timeout=300
+            ["sudo", "apt", "install", "openvpn", "-y"],
+            check=True, capture_output=True, timeout=300
         )
-        if b"already" in install_result.stdout.split():
-            return [0, True]
+        return [0, install_result]
     except subprocess.CalledProcessError as e:
         return [1, str(e)]
     except subprocess.TimeoutExpired as e:
@@ -51,8 +58,6 @@ def certificates_gen():
     cmd_list = [
         [
             "wget",
-            "-P",
-            "~/",
             "https://github.com/OpenVPN/easy-rsa/releases"
             + "/download/v3.0.8/EasyRSA-3.0.8.tgz",
         ],
@@ -60,11 +65,13 @@ def certificates_gen():
         ["cp", "EasyRSA-3.0.8/vars.example", "EasyRSA-3.0.8/vars"],
     ]
     [command(cmd) for cmd in cmd_list]
+    # writing vars config file for easy rsa
     with open(exec_path + "/EasyRSA-3.0.8/vars", "a") as f:
-        (f.write("\n" + option) for option in Config.RSA)
+        [f.write("\n" + option) for option in Config.RSA]
     logging.info("initialising Easy RSA")
     if not os.path.exists(exec_path + "/pki"):
         command(["EasyRSA-3.0.8/./easyrsa", "init-pki"])
+    # buiding CA certificate
     if not os.path.exists(exec_path + "/pki/ca.crt"):
         try:
             build_ca = Shell(has_input=True)
@@ -73,25 +80,30 @@ def certificates_gen():
             logging.info("CA certificate generated")
         except CommandError as e:
             return [1, str(e)]
+    # generating server certificate request + signing
     if not os.path.exists(exec_path + "/pki/reqs/server.req"):
         try:
             serv_certificate = Shell(has_input=True)
-            serv_certificate.run("EasyRSA-3.0.8/./easyrsa gen-req server nopass")
+            serv_certificate.run(
+                "EasyRSA-3.0.8/./easyrsa gen-req server nopass")
             serv_certificate.write("yes\n")
             logging.info("request for server cert generated")
         except CommandError as e:
             return [1, str(e)]
         try:
             sign_serv_cert = Shell(has_input=True)
-            sign_serv_cert.run("EasyRSA-3.0.8/./easyrsa sign-req server server")
+            sign_serv_cert.run(
+                "EasyRSA-3.0.8/./easyrsa sign-req server server")
             sign_serv_cert.write("yes\n")
             logging.info("server cert signed")
         except CommandError as e:
             return [1, str(e)]
+    # generating Diffie Hellman Key + HMAC signature
     if not os.path.exists(exec_path + "/pki/dh.pem"):
         command(["EasyRSA-3.0.8/./easyrsa", "gen-dh"])
     if not os.path.exists(exec_path + "/ta.key"):
         command(["openvpn", "--genkey", "--secret", "ta.key"]),
+    # moving the certs/keys into the openvpn dir
     cmd_list2 = [
         ["sudo", "cp", exec_path + "/pki/private/server.key", "/etc/openvpn/"],
         ["sudo", "cp", exec_path + "/pki/issued/server.crt", "/etc/openvpn"],
@@ -104,10 +116,45 @@ def certificates_gen():
 
 
 def open_vpn_config():
-    # create conf file and parses options
+    # create conf file for Ovpn moving the old one if needed
+    if not os.path.exists("/etc/openvpn/server.conf"):
+        with open("/etc/openvpn/server.conf", "w") as f:
+            [f.write(option + "\n") for option in Config.VPN]
+    else:
+        command(["sudo", "cp", "/etc/openvpn/server.conf",
+                "/etc/openvpn/server.conf.old"])
+        logging.info("server.conf file moved to server.conf.old")
+        with open("/etc/openvpn/server.conf", "w") as f:
+            [f.write(option + "\n") for option in Config.VPN]
+    # adding ipv4 routing to sysctl.con
+    command(["sudo", "cp", "/etc/sysctl.conf",
+            "/etc/sysctl.conf.old"])
+    logging.info("/etc/sysctl.conf file moved to /etc/sysctl.conf.old")
+    with open("/etc/sysctl.conf", "r") as f:
+        lines = f.readlines()
+        done = False
+        for line in lines:
+            if line.strip() == "net.ipv4.ip_forward=1":
+                done = True
+    if not done:
+        with open("/etc/sysctl.conf", "a") as f:
+            f.write("net.ipv4.ip_forward=1\n")
+    # configuring NAT + UFW / starting and enabling ovpn at next startup
+    command(["sudo", "cp", "/etc/ufw/before.rules",
+            "/etc/ufw/before.rules.old"])
+    logging.info(
+        "/etc/ufw/before.rules file moved to /etc/ufw/before.rules.old")
+    with open("/etc/ufw/before.rules", "r") as old:
+        saved_file_data = old.read()
+        with open("/etc/ufw/before.rules", "w") as new:
+            [new.write(option + "\n") for option in Config.UFW_BEFORE]
+            new.write(saved_file_data)
     cmd_list = [
-        ["sudo", "cp", "/usr/share/doc/openvpn/examples/sample-config-files/server.conf.gz", "/etc/openvpn/server.conf.gz"],
-        ["sudo", "gzip", "-d", "/etc/openvpn/server.conf.gz"],
+        ["sudo", "ufw", "default", "allow", "routed"],
+        ["sudo", "ufw", "allow", "1194/udp"],
+        ["sudo", "ufw", "allow", "22/tcp"],
+        ["sudo", "systemctl", "start", "openvpn@server"],
+        ["sudo", "systemctl", "enable", "openvpn@server"],
     ]
     [command(cmd) for cmd in cmd_list]
     return [0, "changed"]
@@ -119,16 +166,19 @@ def main():
         logging.info("VPN properly installed")
     else:
         logging.info("VPN not installed : {}".format(str(ovpn_install[1])))
+        return 1
     certificates = certificates_gen()
     if certificates[0] == 0:
         logging.info("server certificates properly installed")
     else:
         logging.info("VPN not installed : {}".format(str(certificates[1])))
+        return 1
     ovpn_conf = open_vpn_config()
     if ovpn_conf[0] == 0:
         logging.info("VPN properly configured")
     else:
         logging.info("VPN not configured : {}".format(str(certificates[1])))
+        return 1
 
 
 if __name__ == "__main__":
