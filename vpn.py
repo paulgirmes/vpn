@@ -46,7 +46,9 @@ def open_vpn_install():
     try:
         install_result = subprocess.run(
             ["sudo", "apt", "install", "openvpn", "-y"],
-            check=True, capture_output=True, timeout=300
+            check=True,
+            capture_output=True,
+            timeout=300,
         )
         return [0, install_result]
     except subprocess.CalledProcessError as e:
@@ -123,14 +125,17 @@ def open_vpn_config():
         with open("/etc/openvpn/server.conf", "w") as f:
             [f.write(option + "\n") for option in Config.VPN]
     else:
-        command(["sudo", "cp", "/etc/openvpn/server.conf",
-                "/etc/openvpn/server.conf.old"])
+        command(
+            [
+                "sudo", "cp", "/etc/openvpn/server.conf",
+                "/etc/openvpn/server.conf.old"
+            ]
+        )
         logging.info("server.conf file moved to server.conf.old")
         with open("/etc/openvpn/server.conf", "w") as f:
             [f.write(option + "\n") for option in Config.VPN]
     # adding ipv4 routing to sysctl.con
-    command(["sudo", "cp", "/etc/sysctl.conf",
-            "/etc/sysctl.conf.old"])
+    command(["sudo", "cp", "/etc/sysctl.conf", "/etc/sysctl.conf.old"])
     logging.info("/etc/sysctl.conf file moved to /etc/sysctl.conf.old")
     with open("/etc/sysctl.conf", "r") as f:
         lines = f.readlines()
@@ -142,8 +147,8 @@ def open_vpn_config():
         with open("/etc/sysctl.conf", "a") as f:
             f.write("net.ipv4.ip_forward=1\n")
     # configuring NAT + UFW / starting and enabling ovpn at next startup
-    command(["sudo", "cp", "/etc/ufw/before.rules",
-            "/etc/ufw/before.rules.old"])
+    command([
+        "sudo", "cp", "/etc/ufw/before.rules", "/etc/ufw/before.rules.old"])
     logging.info(
         "/etc/ufw/before.rules file moved to /etc/ufw/before.rules.old")
     with open("/etc/ufw/before.rules", "r") as old:
@@ -167,12 +172,13 @@ def clients_config_gen(name="client"):
         ["mkdir", "-p", exec_path + "/client-config/keys"],
     ]
     [command(cmd) for cmd in cmd_list]
-# generating server certificate request + signing
+    # generating server certificate request + signing
     if not os.path.exists(exec_path + "/pki/reqs/{}.req".format(name)):
         try:
             serv_certificate = Shell(has_input=True)
             serv_certificate.run(
-                "EasyRSA-3.0.8/./easyrsa gen-req {} nopass".format(name))
+                "EasyRSA-3.0.8/./easyrsa gen-req {} nopass".format(name)
+            )
             serv_certificate.write("\n")
             logging.info("request for {} cert generated".format(name))
         except CommandError as e:
@@ -180,15 +186,25 @@ def clients_config_gen(name="client"):
         try:
             sign_serv_cert = Shell(has_input=True)
             sign_serv_cert.run(
-                "EasyRSA-3.0.8/./easyrsa sign-req client {}".format(name))
+                "EasyRSA-3.0.8/./easyrsa sign-req client {}".format(name)
+            )
             sign_serv_cert.write("yes\n")
             logging.info("{} cert signed".format(name))
         except CommandError as e:
             return [1, str(e)]
     # copying files + creating client config template file
     cmd_list = [
-        ["sudo", "cp", exec_path + "/pki/private/{}.key".format(name), exec_path + "/client-config/keys/"],
-        ["cp", exec_path + "/pki/issued/client1.crt", exec_path + "/client-config/keys/"],
+        [
+            "sudo",
+            "cp",
+            exec_path + "/pki/private/{}.key".format(name),
+            exec_path + "/client-config/keys/",
+        ],
+        [
+            "cp",
+            exec_path + "/pki/issued/client1.crt",
+            exec_path + "/client-config/keys/",
+        ],
         ["cp", exec_path + "/ta.key", exec_path + "/client-config/keys/"],
         ["cp", exec_path + "/pki/ca.crt", exec_path + "/client-config/keys/"],
         ["mkdir", "-p", exec_path + "/client-config/files"],
@@ -196,18 +212,24 @@ def clients_config_gen(name="client"):
     [command(cmd) for cmd in cmd_list]
     with open(exec_path + "/client-config/files/{}.conf".format(name), "w") as f:
         [f.write(option + "\n") for option in Config.VPN_CLIENT]
-    with open(exec_path + "/client-config/files/{}.conf".format(name), "a") as conf_file:
+    with open(
+        exec_path + "/client-config/files/{}.conf".format(name), "a"
+    ) as conf_file:
         with open(exec_path + "/client-config/keys/ca.crt", "r") as ca_cert:
             ca = ca_cert.read()
             conf_file.write("<ca>\n")
             conf_file.write(ca)
             conf_file.write("</ca>\n")
-        with open(exec_path + "/client-config/keys/{}.crt".format(name), "r") as client_cert:
+        with open(
+            exec_path + "/client-config/keys/{}.crt".format(name), "r"
+        ) as client_cert:
             cc = client_cert.read()
             conf_file.write("<cert>\n")
             conf_file.write(cc)
             conf_file.write("</cert>\n")
-        with open(exec_path + "/client-config/keys/{}.key".format(name), "r") as client_key:
+        with open(
+            exec_path + "/client-config/keys/{}.key".format(name), "r"
+        ) as client_key:
             ck = client_key.read()
             conf_file.write("<key>\n")
             conf_file.write(ck)
@@ -217,6 +239,7 @@ def clients_config_gen(name="client"):
             conf_file.write("<tls-auth>\n")
             conf_file.write(ta)
             conf_file.write("</tls-auth>\n")
+    return 0
 
 
 def main():
@@ -240,8 +263,15 @@ def main():
         return 1
     i = 1
     for client in Config.CLIENTS_IP:
-        clients_config_gen(name="client{}".format(i))
-        i += 1
+        if clients_config_gen(name="client{}".format(i)) == 0:
+            logging.info("client{} file generated".format(i))
+            i += 1
+        else:
+            logging.info(
+                "clients not configured properly : problem with client{}".format(i)
+            )
+            return 1
+    logging.info("CONFIGURATION COMPLETED\n--------------------------------")
 
 
 if __name__ == "__main__":

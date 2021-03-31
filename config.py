@@ -4,7 +4,7 @@ class Config:
     """
 
     # the route behind the vpn server to be pushed to clients+
-    # wan interface name for the VPN
+    # wan interface name for the VPN server
     LAN_TO_PUSH = "'route 10.0.1.0 255.255.255.0'"
     WAN_INTERFACE_NAME = "ens33"
     VPN_SERVER_IP = "192.168.0.11"

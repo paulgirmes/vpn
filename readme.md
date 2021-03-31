@@ -1,8 +1,11 @@
 # <H1 align="center">VPN Server installation tool for Ubuntu server</h1>
 
-<h4 align="center">A Script that handles the installation and configuration of OpenVpn on Ubuntu server distributions (together with CA/server certs ...) .</h4>
+<h4 align="center">A Script that handles the installation and configuration of OpenVpn on Ubuntu server distributions (together with CA/server certs ...) and the generation of clients config files containing ca/ta/key/cert.</h4>
 
 <h5 align="center">Project 6 of OpenClassrooms Admin Sys/Cloud<h5>
+
+## Warning
+ * this module has been developped for a study project, for demo purposes only, <b>it does not guarantee a satisfying security level allowing it to be used outside lab projects</b> : the main reason (among others) beeing that the CA signing authority is located on the live vpn server !
 
 ## Prerequisites
 
@@ -10,7 +13,7 @@
 
 * Python3.X (should already be installed)
 
-* shell python package
+* shell python package should be installed on server via pip
 
 ## Using
 
@@ -20,8 +23,13 @@
 
 * use sudo ./vpn.py to execute
 
-* please note that the client side of OpenVpn configuration is not yet handled by this script
-please follow this link to generate your clients certs [procedure](https://www.digitalocean.com/community/tutorials/how-to-set-up-an-openvpn-server-on-ubuntu-18-04). Don't forget to update the server.conf file if you need clients lan routes to be accessed.
+* install openvpn package on the client
+
+* copy the ~/client-config/files/clientX.conf of the server side to the client /etc/openvpn/
+
+* start the clientX connection [sudo systemctl start openvpn@clientx]
+
+* if everything went well (eg : you were able to ping your distant lan from the client) : enable the client at startup if needed [sudo systemctl enable openvpn@clientX]
 
 ## Credits
 
